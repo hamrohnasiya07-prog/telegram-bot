@@ -10,6 +10,7 @@ from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, Con
 
 from datetime import datetime, timedelta, time
 
+# ======================
 TOKEN = "8547255151:AAEy3ZZOCFTNlsCd943vrQsFOKKMsH497d0"
 API_URL = "https://script.google.com/macros/s/AKfycbyRa-vQ2Q8H0lbnjD1aPXHFhpr682QmShcm_JDQCF777Jj37UyNJEGM2tTJ7rGpTmOr/exec"
 
@@ -103,6 +104,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ["👤 Hodimlar","📊 Barcha hodimlar"]
     ]
 
+    state[chat_id] = None
+
     await update.message.reply_text(
         "Tanlang:",
         reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True)
@@ -116,30 +119,98 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     txt = update.message.text
     chat = update.effective_chat.id
 
+    # ========= UMUMIY =========
     if txt == "📊 Umumiy":
         await update.message.reply_text(fmt(get(API_URL+"?type=all"),"UMUMIY"))
         return
 
+    # ========= REALTIME =========
     if txt == "⚡ Real-time":
         await update.message.reply_text(fmt(get(API_URL+"?type=today"),"REAL-TIME"))
         return
 
+    # ========= ORTGA =========
     if txt == "⬅️ Ortga":
         await start(update, context)
         return
 
+    # ========= HODIMLAR =========
     if txt == "👤 Hodimlar":
         kb = [HODIMLAR[i:i+3] for i in range(0,len(HODIMLAR),3)]
         kb.append(["⬅️ Ortga"])
         state[chat] = "hodim"
+        await update.message.reply_text("Hodim tanlang:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
+        return
+
+    # ========= BARCHA HODIMLAR =========
+    if txt == "📊 Barcha hodimlar":
+        kb = [["📆 Oylik","📅 Kunlik"],["⬅️ Ortga"]]
+        state[chat] = {"mode":"all"}
         await update.message.reply_text("Tanlang:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
         return
 
-    if txt == "📊 Barcha hodimlar":
+    # ========= ALL MODE =========
+    if isinstance(state.get(chat), dict) and state[chat].get("mode") == "all":
+
+        if txt == "📆 Oylik":
+            rows = []
+            for h in HODIMLAR:
+                d = get(API_URL+f"?type=hodim_oy&hodim={h}")
+                if d:
+                    rows.append(d)
+
+            await send_excel(context.bot, rows, "oylik.xlsx", chat)
+            return
+
+        if txt == "📅 Kunlik":
+            today = datetime.now()
+            kb = [[(today - timedelta(days=i)).strftime("%Y-%m-%d")] for i in range(5)]
+            kb.append(["⬅️ Ortga"])
+            state[chat]["mode"] = "all_day"
+            await update.message.reply_text("Sanani tanlang:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
+            return
+
+    # ========= ALL DAY =========
+    if isinstance(state.get(chat), dict) and state[chat].get("mode") == "all_day":
+
+        rows = []
+        for h in HODIMLAR:
+            d = get(API_URL+f"?type=day&date={txt}&hodim={h}")
+            if d:
+                rows.append(d)
+
+        await send_excel(context.bot, rows, f"{txt}.xlsx", chat)
+        return
+
+    # ========= HODIM TANLANDI =========
+    if state.get(chat) == "hodim":
+        state[chat] = {"hodim": txt}
         kb = [["📆 Oylik","📅 Kunlik"],["⬅️ Ortga"]]
-        state[chat] = "all"
         await update.message.reply_text("Tanlang:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
         return
+
+    # ========= HODIM MODE =========
+    if isinstance(state.get(chat), dict) and "hodim" in state[chat]:
+
+        h = state[chat]["hodim"]
+
+        if txt == "📆 Oylik":
+            await update.message.reply_text(fmt(get(API_URL+f"?type=hodim_oy&hodim={h}"),f"{h} (oy)"))
+            return
+
+        if txt == "📅 Kunlik":
+            today = datetime.now()
+            kb = [[(today - timedelta(days=i)).strftime("%Y-%m-%d")] for i in range(5)]
+            kb.append(["⬅️ Ortga"])
+            state[chat]["mode"] = "day"
+            await update.message.reply_text("Sanani tanlang:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
+            return
+
+        if state[chat].get("mode") == "day":
+            await update.message.reply_text(
+                fmt(get(API_URL+f"?type=day&date={txt}&hodim={h}"),f"{h} ({txt})")
+            )
+            return
 
 # ======================
 # RUN
@@ -147,7 +218,7 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 app = ApplicationBuilder().token(TOKEN).build()
 
 app.add_handler(CommandHandler("start", start))
-app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))  # 🔥 FIX
+app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
 
 app.job_queue.run_daily(auto_report, time=time(hour=18, minute=10))
 
