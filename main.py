@@ -1,4 +1,4 @@
-import requests
+import aiohttp
 import pandas as pd
 import os
 import threading
@@ -9,7 +9,6 @@ from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 
 from datetime import datetime, timedelta
-from concurrent.futures import ThreadPoolExecutor
 
 # ======================
 TOKEN = "8547255151:AAEy3ZZOCFTNlsCd943vrQsFOKKMsH497d0"
@@ -18,6 +17,7 @@ API_URL = "https://script.google.com/macros/s/AKfycbyRa-vQ2Q8H0lbnjD1aPXHFhpr682
 state = {}
 
 # ======================
+# KEEP ALIVE SERVER
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -47,30 +47,26 @@ def safe(d):
         }
     return d
 
-def get(url):
+# ======================
+async def fetch(session, url):
     try:
-        r = requests.get(url, timeout=4)
-        return safe(r.json()) if r.status_code == 200 else safe(None)
+        async with session.get(url, timeout=5) as res:
+            return safe(await res.json())
     except:
         return safe(None)
 
-def get_many(urls):
-    with ThreadPoolExecutor(max_workers=8) as ex:
-        return list(ex.map(get, urls))
+async def get_many(urls):
+    async with aiohttp.ClientSession() as session:
+        tasks = [fetch(session, u) for u in urls]
+        return await asyncio.gather(*tasks)
 
 # ======================
 def fmt(d, title):
     d = safe(d)
     return (
         f"📊 {title}\n\n"
-        f"👥 Mijozlar: {d['mijoz']}\n"
-        f"📞 Qo‘ng‘iroq: {d['qongiroq']}\n"
-        f"📅 Muxlat: {d['muxlat']}\n"
-        f"💰 To‘lov: {d['tolov']}\n"
-        f"⏰ Kechikdi: {d['kechikdi']}\n"
-        f"📵 Bog‘lanmadi: {d['bog']}\n"
-        f"⚠️ Muamoli: {d['muamoli']}\n"
-        f"⚖️ Sud: {d['sud']}"
+        f"👥 {d['mijoz']} | 📞 {d['qongiroq']} | 💰 {d['tolov']}\n"
+        f"⏰ {d['kechikdi']} | 📵 {d['bog']} | ⚠️ {d['muamoli']}"
     )
 
 # ======================
@@ -103,17 +99,20 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     s = state.get(chat, {"flow":"menu"})
 
-    # ===== MENU =====
     if txt == "⬅️ Ortga":
         return await start(update, context)
 
     if txt == "📊 Umumiy":
-        return await update.message.reply_text(fmt(get(API_URL+"?type=all"),"UMUMIY"))
+        async with aiohttp.ClientSession() as session:
+            d = await fetch(session, API_URL+"?type=all")
+        return await update.message.reply_text(fmt(d, "UMUMIY"))
 
     if txt == "⚡ Real-time":
-        return await update.message.reply_text(fmt(get(API_URL+"?type=today"),"REAL-TIME"))
+        async with aiohttp.ClientSession() as session:
+            d = await fetch(session, API_URL+"?type=today")
+        return await update.message.reply_text(fmt(d, "REAL-TIME"))
 
-    # ===== HODIMLAR =====
+    # ===== HODIM =====
     if txt == "👤 Hodimlar":
         state[chat] = {"flow":"hodim_list"}
 
@@ -133,7 +132,9 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         h = s["hodim"]
 
         if txt == "📆 Oylik":
-            return await update.message.reply_text(fmt(get(API_URL+f"?type=hodim_oy&hodim={h}"),f"{h} (oy)"))
+            async with aiohttp.ClientSession() as session:
+                d = await fetch(session, API_URL+f"?type=hodim_oy&hodim={h}")
+            return await update.message.reply_text(fmt(d, f"{h}"))
 
         if txt == "📅 Kunlik":
             dates = [(datetime.now()-timedelta(days=i)).strftime("%Y-%m-%d") for i in range(7)]
@@ -145,24 +146,27 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if s["flow"] == "hodim_day":
         h = s["hodim"]
-        return await update.message.reply_text(fmt(get(API_URL+f"?type=day&date={txt}&hodim={h}"),f"{h} ({txt})"))
 
-    # ===== BARCHA =====
+        async with aiohttp.ClientSession() as session:
+            d = await fetch(session, API_URL+f"?type=day&date={txt}&hodim={h}")
+
+        return await update.message.reply_text(fmt(d, f"{h} ({txt})"))
+
+    # ===== ALL =====
     if txt == "📊 Barcha hodimlar":
-        state[chat] = {"flow":"all_menu"}
+        state[chat] = {"flow":"all"}
 
         kb = [["📆 Oylik","📅 Kunlik"],["⬅️ Ortga"]]
         return await update.message.reply_text("Tanlang:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
 
-    if s["flow"] == "all_menu":
+    if s["flow"] == "all":
 
         if txt == "📆 Oylik":
 
             urls = [API_URL+f"?type=hodim_oy&hodim={h}" for h in HODIMLAR]
-            data = get_many(urls)
+            data = await get_many(urls)
 
             rows = [{"Hodim":HODIMLAR[i], **data[i]} for i in range(len(data))]
-
             return await send_excel(context.bot, rows, "oylik.xlsx", chat)
 
         if txt == "📅 Kunlik":
@@ -177,13 +181,14 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if s["flow"] == "all_day":
 
         urls = [API_URL+f"?type=day&date={txt}&hodim={h}" for h in HODIMLAR]
-        data = get_many(urls)
+        data = await get_many(urls)
 
         rows = [{"Hodim":HODIMLAR[i], **data[i]} for i in range(len(data))]
-
         return await send_excel(context.bot, rows, f"{txt}.xlsx", chat)
 
 # ======================
+import asyncio
+
 app = ApplicationBuilder().token(TOKEN).build()
 
 app.add_handler(CommandHandler("start", start))
