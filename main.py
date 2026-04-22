@@ -9,7 +9,6 @@ from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 
 from datetime import datetime, timedelta
-
 from concurrent.futures import ThreadPoolExecutor
 
 # ======================
@@ -77,12 +76,12 @@ async def send_excel(bot, rows, filename, chat_id):
 # ======================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
+    state[update.effective_chat.id] = {}
+
     kb = [
         ["📊 Umumiy","⚡ Real-time"],
         ["👤 Hodimlar","📊 Barcha hodimlar"]
     ]
-
-    state[update.effective_chat.id] = {}
 
     await update.message.reply_text(
         "Tanlang:",
@@ -94,13 +93,12 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     txt = update.message.text
     chat = update.effective_chat.id
+    s = state.get(chat, {})
 
     if not txt:
         return
 
-    # =================
-    # UMUMIY
-    # =================
+    # ===== UMUMIY =====
     if txt == "📊 Umumiy":
         await update.message.reply_text(fmt(get(API_URL+"?type=all"),"UMUMIY"))
         return
@@ -113,20 +111,67 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await start(update, context)
         return
 
-    # =================
-    # BARCHA HODIMLAR
-    # =================
-    if txt == "📊 Barcha hodimlar":
-        state[chat] = {"flow": "all"}
+    # ======================
+    # HODIMLAR (TEXT ONLY)
+    # ======================
+    if txt == "👤 Hodimlar":
+        state[chat] = {"flow": "hodim_select"}
+
+        kb = [HODIMLAR[i:i+3] for i in range(0,len(HODIMLAR),3)]
+        kb.append(["⬅️ Ortga"])
+
+        await update.message.reply_text("Hodim tanlang:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
+        return
+
+    if s.get("flow") == "hodim_select":
+        state[chat] = {"flow":"hodim_menu","hodim":txt}
+
         kb = [["📆 Oylik","📅 Kunlik"],["⬅️ Ortga"]]
+
         await update.message.reply_text("Tanlang:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
         return
 
-    s = state.get(chat, {})
+    if s.get("flow") == "hodim_menu":
+
+        h = s.get("hodim")
+
+        if txt == "📆 Oylik":
+            await update.message.reply_text(fmt(get(API_URL+f"?type=hodim_oy&hodim={h}"),f"{h} (oy)"))
+            return
+
+        if txt == "📅 Kunlik":
+            dates = [(datetime.now()-timedelta(days=i)).strftime("%Y-%m-%d") for i in range(10)]
+            kb = [[d] for d in dates]
+            kb.append(["⬅️ Ortga"])
+
+            state[chat]["flow"] = "hodim_day"
+
+            await update.message.reply_text("Sanani tanlang:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
+            return
+
+    if s.get("flow") == "hodim_day":
+        h = s.get("hodim")
+
+        await update.message.reply_text(
+            fmt(get(API_URL+f"?type=day&date={txt}&hodim={h}"),f"{h} ({txt})")
+        )
+        return
+
+    # ======================
+    # BARCHA HODIMLAR (EXCEL)
+    # ======================
+    if txt == "📊 Barcha hodimlar":
+        state[chat] = {"flow": "all"}
+
+        kb = [["📆 Oylik","📅 Kunlik"],["⬅️ Ortga"]]
+
+        await update.message.reply_text("Tanlang:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
+        return
 
     if s.get("flow") == "all":
 
         if txt == "📆 Oylik":
+
             urls = [API_URL + f"?type=hodim_oy&hodim={h}" for h in HODIMLAR]
             results = get_many(urls)
 
@@ -139,6 +184,7 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         if txt == "📅 Kunlik":
+
             dates = [(datetime.now()-timedelta(days=i)).strftime("%Y-%m-%d") for i in range(10)]
             kb = [[d] for d in dates]
             kb.append(["⬅️ Ortga"])
