@@ -64,13 +64,19 @@ async def get_many(urls):
         return await asyncio.gather(*[fetch(session,u) for u in urls])
 
 # ======================
+# 🔥 VERTICAL FORMAT
 def fmt(d, title):
     d = safe(d)
     return (
         f"📊 {title}\n\n"
-        f"👥 Mijoz: {d['mijoz']} | 📞 Qo‘ng‘iroq: {d['qongiroq']} | 💰 To‘lov: {d['tolov']}\n"
-        f"📅 Muxlat: {d['muxlat']} | ⚖️ Sud: {d['sud']}\n"
-        f"⏰ Kechikdi: {d['kechikdi']} | 🚫 Bog‘lanmadi: {d['bog']} | ⚠️ Muamoli: {d['muamoli']}"
+        f"👥 Mijoz: {d['mijoz']}\n"
+        f"📞 Qo‘ng‘iroq: {d['qongiroq']}\n"
+        f"💰 To‘lov: {d['tolov']}\n"
+        f"📅 Muxlat: {d['muxlat']}\n"
+        f"⚖️ Sud: {d['sud']}\n"
+        f"⏰ Kechikdi: {d['kechikdi']}\n"
+        f"🚫 Bog‘lanmadi: {d['bog']}\n"
+        f"⚠️ Muamoli: {d['muamoli']}"
     )
 
 # ======================
@@ -127,7 +133,7 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await update.message.reply_text("Hodim tanlang:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
 
     if s["flow"] == "hodim_list":
-        state[chat] = {"flow":"hodim_menu","hodim":txt}
+        state[chat] = {"flow":"hodim_menu","hodim":txt.strip()}
 
         kb = [["📆 Oylik","📅 Kunlik"],["⬅️ Ortga"]]
         return await update.message.reply_text("Tanlang:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
@@ -138,8 +144,8 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if txt == "📆 Oylik":
             async with aiohttp.ClientSession() as session:
-                d = await fetch(session, API_URL+f"?type=hodim_oy&hodim={h}")
-            return await update.message.reply_text(fmt(d, f"{h}"))
+                d = await fetch(session, API_URL+f"?type=month&hodim={h}")
+            return await update.message.reply_text(fmt(d, h))
 
         if txt == "📅 Kunlik":
             dates = [(datetime.now()-timedelta(days=i)).strftime("%Y-%m-%d") for i in range(7)]
@@ -165,7 +171,7 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if s["flow"] == "all":
 
         if txt == "📆 Oylik":
-            urls = [API_URL+f"?type=hodim_oy&hodim={h}" for h in HODIMLAR]
+            urls = [API_URL+f"?type=month&hodim={h.strip()}" for h in HODIMLAR]
             data = await get_many(urls)
             rows = [{"Hodim":HODIMLAR[i], **data[i]} for i in range(len(data))]
             return await send_excel(context.bot, rows, "oylik.xlsx", chat)
@@ -179,17 +185,16 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return await update.message.reply_text("Sanani tanlang:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
 
     if s["flow"] == "all_day":
-        urls = [API_URL+f"?type=day&date={txt}&hodim={h}" for h in HODIMLAR]
+        urls = [API_URL+f"?type=day&date={txt}&hodim={h.strip()}" for h in HODIMLAR]
         data = await get_many(urls)
         rows = [{"Hodim":HODIMLAR[i], **data[i]} for i in range(len(data))]
         return await send_excel(context.bot, rows, f"{txt}.xlsx", chat)
 
 # ======================
-# AUTO REPORT (18:10)
+# AUTO REPORT
 async def auto_report(app):
     while True:
         now = datetime.now()
-
         if now.hour == 18 and now.minute == 10:
             async with aiohttp.ClientSession() as session:
                 d = await fetch(session, API_URL+"?type=today")
