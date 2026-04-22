@@ -10,16 +10,14 @@ from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, Con
 
 from datetime import datetime, timedelta, time
 
-# ======================
-# CONFIG
-# ======================
 TOKEN = "8547255151:AAEy3ZZOCFTNlsCd943vrQsFOKKMsH497d0"
 API_URL = "https://script.google.com/macros/s/AKfycbyRa-vQ2Q8H0lbnjD1aPXHFhpr682QmShcm_JDQCF777Jj37UyNJEGM2tTJ7rGpTmOr/exec"
 
+ADMINS = set()
 state = {}
 
 # ======================
-# RAILWAY SERVER
+# SERVER (Railway)
 # ======================
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -81,20 +79,15 @@ async def send_excel(bot, rows, filename, chat_id):
     os.remove(filename)
 
 # ======================
-# AUTO REPORT (FIXED)
+# AUTO REPORT
 # ======================
 async def auto_report(context: ContextTypes.DEFAULT_TYPE):
     today = datetime.now().strftime("%Y-%m-%d")
-
     d = get(API_URL + "?type=today")
 
-    # 🔥 barcha aktiv userlarga yuboradi
-    for chat_id in context.application.chat_data.keys():
+    for chat_id in ADMINS:
         try:
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text=fmt(d, f"📅 AUTO HISOBOT ({today})")
-            )
+            await context.bot.send_message(chat_id, fmt(d, f"📅 AUTO ({today})"))
         except:
             pass
 
@@ -103,9 +96,7 @@ async def auto_report(context: ContextTypes.DEFAULT_TYPE):
 # ======================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-
-    # 🔥 userni saqlaymiz (DB o‘rniga)
-    context.application.chat_data[chat_id] = True
+    ADMINS.add(chat_id)
 
     kb = [
         ["📊 Umumiy","⚡ Real-time"],
@@ -118,7 +109,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 # ======================
-# HANDLER
+# HANDLE
 # ======================
 async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
@@ -133,28 +124,22 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(fmt(get(API_URL+"?type=today"),"REAL-TIME"))
         return
 
+    if txt == "⬅️ Ortga":
+        await start(update, context)
+        return
+
+    if txt == "👤 Hodimlar":
+        kb = [HODIMLAR[i:i+3] for i in range(0,len(HODIMLAR),3)]
+        kb.append(["⬅️ Ortga"])
+        state[chat] = "hodim"
+        await update.message.reply_text("Tanlang:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
+        return
+
     if txt == "📊 Barcha hodimlar":
         kb = [["📆 Oylik","📅 Kunlik"],["⬅️ Ortga"]]
         state[chat] = "all"
         await update.message.reply_text("Tanlang:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
         return
-
-    if state.get(chat) == "all":
-
-        if txt == "📆 Oylik":
-            rows = []
-
-            for h in HODIMLAR:
-                d = get(API_URL+f"?type=hodim_oy&hodim={h}")
-                if d:
-                    rows.append(d)
-
-            if not rows:
-                await update.message.reply_text("❌ Ma'lumot yo‘q")
-                return
-
-            await send_excel(context.bot, rows, "oylik.xlsx", chat)
-            return
 
 # ======================
 # RUN
@@ -162,7 +147,7 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 app = ApplicationBuilder().token(TOKEN).build()
 
 app.add_handler(CommandHandler("start", start))
-app.add_handler(MessageHandler(filters.TEXT, handle))
+app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))  # 🔥 FIX
 
 app.job_queue.run_daily(auto_report, time=time(hour=18, minute=10))
 
