@@ -10,8 +10,9 @@ from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, Con
 
 from datetime import datetime, timedelta, time
 
+from concurrent.futures import ThreadPoolExecutor
 from openpyxl import load_workbook
-from openpyxl.styles import Font, Alignment
+from openpyxl.styles import Font, Alignment, PatternFill
 
 # ======================
 TOKEN = "8547255151:AAEy3ZZOCFTNlsCd943vrQsFOKKMsH497d0"
@@ -36,8 +37,6 @@ def run_server():
 threading.Thread(target=run_server, daemon=True).start()
 
 # ======================
-# HODIMLAR
-# ======================
 HODIMLAR = [
     "Layla","Zufarbek","Nazokat","Bibizaxro",
     "Moxinur","Abdurasul","Uzipa","Aziza",
@@ -45,16 +44,16 @@ HODIMLAR = [
 ]
 
 # ======================
-# API
-# ======================
 def get(url):
     try:
         return requests.get(url, timeout=5).json()
     except:
         return None
 
-# ======================
-# FORMAT
+def get_many(urls):
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        return list(executor.map(get, urls))
+
 # ======================
 def fmt(d, title):
     if not d:
@@ -74,8 +73,6 @@ def fmt(d, title):
 """
 
 # ======================
-# CHIROYLI EXCEL
-# ======================
 async def send_excel(bot, rows, filename, chat_id):
 
     df = pd.DataFrame(rows)
@@ -90,12 +87,21 @@ async def send_excel(bot, rows, filename, chat_id):
     wb = load_workbook(filename)
     ws = wb.active
 
-    # header style
-    for cell in ws[1]:
-        cell.font = Font(bold=True)
-        cell.alignment = Alignment(horizontal="center")
+    # HEADER STYLE
+    header_fill = PatternFill(start_color="4F81BD", end_color="4F81BD", fill_type="solid")
 
-    # column width
+    for cell in ws[1]:
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.alignment = Alignment(horizontal="center")
+        cell.fill = header_fill
+
+    # ZEBRA STYLE
+    for row in ws.iter_rows(min_row=2, max_row=ws.max_row):
+        if row[0].row % 2 == 0:
+            for cell in row:
+                cell.fill = PatternFill(start_color="DCE6F1", end_color="DCE6F1", fill_type="solid")
+
+    # AUTO WIDTH
     for col in ws.columns:
         max_length = 0
         col_letter = col[0].column_letter
@@ -104,15 +110,13 @@ async def send_excel(bot, rows, filename, chat_id):
             if cell.value:
                 max_length = max(max_length, len(str(cell.value)))
 
-        ws.column_dimensions[col_letter].width = max_length + 3
+        ws.column_dimensions[col_letter].width = max_length + 4
 
     wb.save(filename)
 
     await bot.send_document(chat_id=chat_id, document=open(filename, "rb"))
     os.remove(filename)
 
-# ======================
-# AUTO REPORT
 # ======================
 async def auto_report(context: ContextTypes.DEFAULT_TYPE):
     today = datetime.now().strftime("%Y-%m-%d")
@@ -124,8 +128,6 @@ async def auto_report(context: ContextTypes.DEFAULT_TYPE):
         except:
             pass
 
-# ======================
-# START
 # ======================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
@@ -143,8 +145,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 # ======================
-# HANDLE
-# ======================
 async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     txt = update.message.text
@@ -153,22 +153,18 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not txt:
         return
 
-    # UMUMIY
     if txt == "📊 Umumiy":
         await update.message.reply_text(fmt(get(API_URL+"?type=all"),"UMUMIY"))
         return
 
-    # REALTIME
     if txt == "⚡ Real-time":
         await update.message.reply_text(fmt(get(API_URL+"?type=today"),"REAL-TIME"))
         return
 
-    # ORTGA
     if txt == "⬅️ Ortga":
         await start(update, context)
         return
 
-    # HODIMLAR
     if txt == "👤 Hodimlar":
         kb = [HODIMLAR[i:i+3] for i in range(0,len(HODIMLAR),3)]
         kb.append(["⬅️ Ortga"])
@@ -176,22 +172,24 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Hodim tanlang:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
         return
 
-    # BARCHA HODIMLAR
     if txt == "📊 Barcha hodimlar":
         kb = [["📆 Oylik","📅 Kunlik"],["⬅️ Ortga"]]
         state[chat] = {"mode":"all"}
         await update.message.reply_text("Tanlang:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
         return
 
-    # ALL MODE
+    # ===== OYLIK =====
     if isinstance(state.get(chat), dict) and state[chat].get("mode") == "all":
 
         if txt == "📆 Oylik":
+
+            urls = [API_URL + f"?type=hodim_oy&hodim={h}" for h in HODIMLAR]
+            results = get_many(urls)
+
             rows = []
-            for h in HODIMLAR:
-                d = get(API_URL+f"?type=hodim_oy&hodim={h}")
+            for i, d in enumerate(results):
                 if d:
-                    rows.append({"Hodim": h, **d})
+                    rows.append({"Hodim": HODIMLAR[i], **d})
 
             await send_excel(context.bot, rows, "oylik.xlsx", chat)
             return
@@ -204,17 +202,19 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("Sanani tanlang:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
             return
 
-    # ALL DAY
+    # ===== KUNLIK =====
     if isinstance(state.get(chat), dict) and state[chat].get("mode") == "all_day":
 
         if not txt.startswith("202"):
             return
 
+        urls = [API_URL + f"?type=day&date={txt}&hodim={h}" for h in HODIMLAR]
+        results = get_many(urls)
+
         rows = []
-        for h in HODIMLAR:
-            d = get(API_URL+f"?type=day&date={txt}&hodim={h}")
+        for i, d in enumerate(results):
             if d:
-                rows.append({"Hodim": h, **d})
+                rows.append({"Hodim": HODIMLAR[i], **d})
 
         if not rows:
             await update.message.reply_text("❌ Ma'lumot yo‘q")
@@ -223,14 +223,14 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_excel(context.bot, rows, f"{txt}.xlsx", chat)
         return
 
-    # HODIM TANLANDI
+    # ===== HODIM TANLASH =====
     if state.get(chat) == "hodim":
         state[chat] = {"hodim": txt}
         kb = [["📆 Oylik","📅 Kunlik"],["⬅️ Ortga"]]
         await update.message.reply_text("Tanlang:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
         return
 
-    # HODIM MODE
+    # ===== HODIM MODE =====
     if isinstance(state.get(chat), dict) and "hodim" in state[chat]:
 
         h = state[chat]["hodim"]
@@ -253,8 +253,6 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
-# ======================
-# RUN
 # ======================
 app = ApplicationBuilder().token(TOKEN).build()
 
