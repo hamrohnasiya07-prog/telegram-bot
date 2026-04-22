@@ -38,33 +38,40 @@ HODIMLAR = [
 ]
 
 # ======================
+def safe(d):
+    if not d:
+        return {
+            "mijoz":0,"qongiroq":0,"muxlat":0,
+            "tolov":0,"kechikdi":0,"bog":0,
+            "muamoli":0,"sud":0
+        }
+    return d
+
 def get(url):
     try:
-        return requests.get(url, timeout=5).json()
+        r = requests.get(url, timeout=4)
+        return safe(r.json()) if r.status_code == 200 else safe(None)
     except:
-        return None
+        return safe(None)
 
 def get_many(urls):
-    with ThreadPoolExecutor(max_workers=10) as executor:
-        return list(executor.map(get, urls))
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        return list(ex.map(get, urls))
 
 # ======================
 def fmt(d, title):
-    if not d:
-        return "❌ Xatolik"
-
-    return f"""
-📊 {title}
-
-👥 Mijozlar: {d.get('mijoz',0)}
-📞 Qo‘ng‘iroq: {d.get('qongiroq',0)}
-📅 Muxlat: {d.get('muxlat',0)}
-💰 To‘lov: {d.get('tolov',0)}
-⏰ Kechikdi: {d.get('kechikdi',0)}
-📵 Bog‘lanmadi: {d.get('bog',0)}
-⚠️ Muamoli: {d.get('muamoli',0)}
-⚖️ Sud: {d.get('sud',0)}
-"""
+    d = safe(d)
+    return (
+        f"📊 {title}\n\n"
+        f"👥 Mijozlar: {d['mijoz']}\n"
+        f"📞 Qo‘ng‘iroq: {d['qongiroq']}\n"
+        f"📅 Muxlat: {d['muxlat']}\n"
+        f"💰 To‘lov: {d['tolov']}\n"
+        f"⏰ Kechikdi: {d['kechikdi']}\n"
+        f"📵 Bog‘lanmadi: {d['bog']}\n"
+        f"⚠️ Muamoli: {d['muamoli']}\n"
+        f"⚖️ Sud: {d['sud']}"
+    )
 
 # ======================
 async def send_excel(bot, rows, filename, chat_id):
@@ -75,137 +82,106 @@ async def send_excel(bot, rows, filename, chat_id):
 
 # ======================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-    state[update.effective_chat.id] = {}
+    chat = update.effective_chat.id
+    state[chat] = {"flow": "menu"}
 
     kb = [
         ["📊 Umumiy","⚡ Real-time"],
         ["👤 Hodimlar","📊 Barcha hodimlar"]
     ]
 
-    await update.message.reply_text(
-        "Tanlang:",
-        reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True)
-    )
+    await update.message.reply_text("Tanlang:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
 
 # ======================
 async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     txt = update.message.text
     chat = update.effective_chat.id
-    s = state.get(chat, {})
 
     if not txt:
         return
 
-    # ===== UMUMIY =====
+    s = state.get(chat, {"flow":"menu"})
+
+    # ===== MENU =====
+    if txt == "⬅️ Ortga":
+        return await start(update, context)
+
     if txt == "📊 Umumiy":
-        await update.message.reply_text(fmt(get(API_URL+"?type=all"),"UMUMIY"))
-        return
+        return await update.message.reply_text(fmt(get(API_URL+"?type=all"),"UMUMIY"))
 
     if txt == "⚡ Real-time":
-        await update.message.reply_text(fmt(get(API_URL+"?type=today"),"REAL-TIME"))
-        return
+        return await update.message.reply_text(fmt(get(API_URL+"?type=today"),"REAL-TIME"))
 
-    if txt == "⬅️ Ortga":
-        await start(update, context)
-        return
-
-    # ======================
-    # HODIMLAR (TEXT ONLY)
-    # ======================
+    # ===== HODIMLAR =====
     if txt == "👤 Hodimlar":
-        state[chat] = {"flow": "hodim_select"}
+        state[chat] = {"flow":"hodim_list"}
 
         kb = [HODIMLAR[i:i+3] for i in range(0,len(HODIMLAR),3)]
         kb.append(["⬅️ Ortga"])
 
-        await update.message.reply_text("Hodim tanlang:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
-        return
+        return await update.message.reply_text("Hodim tanlang:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
 
-    if s.get("flow") == "hodim_select":
+    if s["flow"] == "hodim_list":
         state[chat] = {"flow":"hodim_menu","hodim":txt}
 
         kb = [["📆 Oylik","📅 Kunlik"],["⬅️ Ortga"]]
+        return await update.message.reply_text("Tanlang:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
 
-        await update.message.reply_text("Tanlang:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
-        return
+    if s["flow"] == "hodim_menu":
 
-    if s.get("flow") == "hodim_menu":
-
-        h = s.get("hodim")
+        h = s["hodim"]
 
         if txt == "📆 Oylik":
-            await update.message.reply_text(fmt(get(API_URL+f"?type=hodim_oy&hodim={h}"),f"{h} (oy)"))
-            return
+            return await update.message.reply_text(fmt(get(API_URL+f"?type=hodim_oy&hodim={h}"),f"{h} (oy)"))
 
         if txt == "📅 Kunlik":
-            dates = [(datetime.now()-timedelta(days=i)).strftime("%Y-%m-%d") for i in range(10)]
+            dates = [(datetime.now()-timedelta(days=i)).strftime("%Y-%m-%d") for i in range(7)]
             kb = [[d] for d in dates]
             kb.append(["⬅️ Ortga"])
 
             state[chat]["flow"] = "hodim_day"
+            return await update.message.reply_text("Sanani tanlang:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
 
-            await update.message.reply_text("Sanani tanlang:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
-            return
+    if s["flow"] == "hodim_day":
+        h = s["hodim"]
+        return await update.message.reply_text(fmt(get(API_URL+f"?type=day&date={txt}&hodim={h}"),f"{h} ({txt})"))
 
-    if s.get("flow") == "hodim_day":
-        h = s.get("hodim")
-
-        await update.message.reply_text(
-            fmt(get(API_URL+f"?type=day&date={txt}&hodim={h}"),f"{h} ({txt})")
-        )
-        return
-
-    # ======================
-    # BARCHA HODIMLAR (EXCEL)
-    # ======================
+    # ===== BARCHA =====
     if txt == "📊 Barcha hodimlar":
-        state[chat] = {"flow": "all"}
+        state[chat] = {"flow":"all_menu"}
 
         kb = [["📆 Oylik","📅 Kunlik"],["⬅️ Ortga"]]
+        return await update.message.reply_text("Tanlang:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
 
-        await update.message.reply_text("Tanlang:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
-        return
-
-    if s.get("flow") == "all":
+    if s["flow"] == "all_menu":
 
         if txt == "📆 Oylik":
 
-            urls = [API_URL + f"?type=hodim_oy&hodim={h}" for h in HODIMLAR]
-            results = get_many(urls)
+            urls = [API_URL+f"?type=hodim_oy&hodim={h}" for h in HODIMLAR]
+            data = get_many(urls)
 
-            rows = []
-            for i, d in enumerate(results):
-                if d:
-                    rows.append({"Hodim": HODIMLAR[i], **d})
+            rows = [{"Hodim":HODIMLAR[i], **data[i]} for i in range(len(data))]
 
-            await send_excel(context.bot, rows, "oylik.xlsx", chat)
-            return
+            return await send_excel(context.bot, rows, "oylik.xlsx", chat)
 
         if txt == "📅 Kunlik":
 
-            dates = [(datetime.now()-timedelta(days=i)).strftime("%Y-%m-%d") for i in range(10)]
+            dates = [(datetime.now()-timedelta(days=i)).strftime("%Y-%m-%d") for i in range(7)]
             kb = [[d] for d in dates]
             kb.append(["⬅️ Ortga"])
 
             state[chat]["flow"] = "all_day"
+            return await update.message.reply_text("Sanani tanlang:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
 
-            await update.message.reply_text("Sanani tanlang:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
-            return
+    if s["flow"] == "all_day":
 
-    if s.get("flow") == "all_day":
+        urls = [API_URL+f"?type=day&date={txt}&hodim={h}" for h in HODIMLAR]
+        data = get_many(urls)
 
-        urls = [API_URL + f"?type=day&date={txt}&hodim={h}" for h in HODIMLAR]
-        results = get_many(urls)
+        rows = [{"Hodim":HODIMLAR[i], **data[i]} for i in range(len(data))]
 
-        rows = []
-        for i, d in enumerate(results):
-            if d:
-                rows.append({"Hodim": HODIMLAR[i], **d})
-
-        await send_excel(context.bot, rows, f"{txt}.xlsx", chat)
-        return
+        return await send_excel(context.bot, rows, f"{txt}.xlsx", chat)
 
 # ======================
 app = ApplicationBuilder().token(TOKEN).build()
