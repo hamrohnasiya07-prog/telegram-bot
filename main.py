@@ -11,14 +11,13 @@ from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, Con
 
 from datetime import datetime, timedelta
 
-# ======================
 TOKEN = "8547255151:AAEy3ZZOCFTNlsCd943vrQsFOKKMsH497d0"
 API_URL = "https://script.google.com/macros/s/AKfycbyRa-vQ2Q8H0lbnjD1aPXHFhpr682QmShcm_JDQCF777Jj37UyNJEGM2tTJ7rGpTmOr/exec"
 
 state = {}
 
 # ======================
-# KEEP ALIVE SERVER (Railway)
+# KEEP ALIVE (Railway)
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -40,12 +39,24 @@ HODIMLAR = [
 
 # ======================
 def safe(d):
+    base = {
+        "mijoz":0,
+        "qongiroq":0,
+        "muxlat":0,
+        "tolov":0,
+        "kechikdi":0,
+        "bog":0,
+        "muamoli":0,
+        "sud":0
+    }
+
     if not d:
-        return {
-            "mijoz":0,"qongiroq":0,"muxlat":0,
-            "tolov":0,"kechikdi":0,"bog":0,
-            "muamoli":0,"sud":0
-        }
+        return base
+
+    for k in base:
+        if k not in d:
+            d[k] = 0
+
     return d
 
 # ======================
@@ -68,7 +79,8 @@ def fmt(d, title):
 
     return (
         f"📊 {title}\n\n"
-        f"👥 {d['mijoz']} | 📞 {d['qongiroq']} | 💰 {d['tolov']}\n"
+        f"👥 {d['mijoz']} | 📞 {d['qongiroq']} ta | 💰 {d['tolov']} so‘m\n"
+        f"📅 {d['muxlat']} kun | ⚖️ {d['sud']} ta\n"
         f"⏰ {d['kechikdi']} | 🚫 {d['bog']} | ⚠️ {d['muamoli']}"
     )
 
@@ -96,13 +108,11 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     txt = update.message.text
     chat = update.effective_chat.id
+    s = state.get(chat, {"flow":"menu"})
 
     if not txt:
         return
 
-    s = state.get(chat, {"flow":"menu"})
-
-    # ===== MENU =====
     if txt == "⬅️ Ortga":
         return await start(update, context)
 
@@ -167,16 +177,13 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if s["flow"] == "all":
 
         if txt == "📆 Oylik":
-
             urls = [API_URL+f"?type=hodim_oy&hodim={h}" for h in HODIMLAR]
             data = await get_many(urls)
 
             rows = [{"Hodim":HODIMLAR[i], **data[i]} for i in range(len(data))]
-
             return await send_excel(context.bot, rows, "oylik.xlsx", chat)
 
         if txt == "📅 Kunlik":
-
             dates = [(datetime.now()-timedelta(days=i)).strftime("%Y-%m-%d") for i in range(7)]
             kb = [[d] for d in dates]
             kb.append(["⬅️ Ortga"])
@@ -185,12 +192,10 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return await update.message.reply_text("Sanani tanlang:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
 
     if s["flow"] == "all_day":
-
         urls = [API_URL+f"?type=day&date={txt}&hodim={h}" for h in HODIMLAR]
         data = await get_many(urls)
 
         rows = [{"Hodim":HODIMLAR[i], **data[i]} for i in range(len(data))]
-
         return await send_excel(context.bot, rows, f"{txt}.xlsx", chat)
 
 # ======================
