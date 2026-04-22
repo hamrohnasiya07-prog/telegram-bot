@@ -1,4 +1,5 @@
 import aiohttp
+import asyncio
 import pandas as pd
 import os
 import threading
@@ -17,7 +18,7 @@ API_URL = "https://script.google.com/macros/s/AKfycbyRa-vQ2Q8H0lbnjD1aPXHFhpr682
 state = {}
 
 # ======================
-# KEEP ALIVE SERVER
+# KEEP ALIVE SERVER (Railway)
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -51,7 +52,8 @@ def safe(d):
 async def fetch(session, url):
     try:
         async with session.get(url, timeout=5) as res:
-            return safe(await res.json())
+            data = await res.json()
+            return safe(data)
     except:
         return safe(None)
 
@@ -63,10 +65,11 @@ async def get_many(urls):
 # ======================
 def fmt(d, title):
     d = safe(d)
+
     return (
         f"📊 {title}\n\n"
         f"👥 {d['mijoz']} | 📞 {d['qongiroq']} | 💰 {d['tolov']}\n"
-        f"⏰ {d['kechikdi']} | 📵 {d['bog']} | ⚠️ {d['muamoli']}"
+        f"⏰ {d['kechikdi']} | 🚫 {d['bog']} | ⚠️ {d['muamoli']}"
     )
 
 # ======================
@@ -99,9 +102,11 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     s = state.get(chat, {"flow":"menu"})
 
+    # ===== MENU =====
     if txt == "⬅️ Ortga":
         return await start(update, context)
 
+    # ===== UMUMIY =====
     if txt == "📊 Umumiy":
         async with aiohttp.ClientSession() as session:
             d = await fetch(session, API_URL+"?type=all")
@@ -112,7 +117,7 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
             d = await fetch(session, API_URL+"?type=today")
         return await update.message.reply_text(fmt(d, "REAL-TIME"))
 
-    # ===== HODIM =====
+    # ===== HODIMLAR =====
     if txt == "👤 Hodimlar":
         state[chat] = {"flow":"hodim_list"}
 
@@ -152,7 +157,7 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         return await update.message.reply_text(fmt(d, f"{h} ({txt})"))
 
-    # ===== ALL =====
+    # ===== BARCHA =====
     if txt == "📊 Barcha hodimlar":
         state[chat] = {"flow":"all"}
 
@@ -167,6 +172,7 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
             data = await get_many(urls)
 
             rows = [{"Hodim":HODIMLAR[i], **data[i]} for i in range(len(data))]
+
             return await send_excel(context.bot, rows, "oylik.xlsx", chat)
 
         if txt == "📅 Kunlik":
@@ -184,11 +190,10 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         data = await get_many(urls)
 
         rows = [{"Hodim":HODIMLAR[i], **data[i]} for i in range(len(data))]
+
         return await send_excel(context.bot, rows, f"{txt}.xlsx", chat)
 
 # ======================
-import asyncio
-
 app = ApplicationBuilder().token(TOKEN).build()
 
 app.add_handler(CommandHandler("start", start))
