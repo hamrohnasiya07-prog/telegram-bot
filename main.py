@@ -1,14 +1,13 @@
 import requests
 import pandas as pd
-from telegram import Update, ReplyKeyboardMarkup
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
-from datetime import datetime, timedelta, time
-
-# ====== RENDER PORT FIX (BEPUL WORKAROUND) ======
+from datetime import datetime, time
+from telegram import ReplyKeyboardMarkup
+from telegram.ext import Updater, CommandHandler, MessageHandler, Filters
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import os
 
+# ===== RENDER KEEP-ALIVE =====
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -21,13 +20,12 @@ def run_server():
     server.serve_forever()
 
 threading.Thread(target=run_server).start()
-# ===============================================
+# =============================
 
 TOKEN = "8547255151:AAEy3ZZOCFTNlsCd943vrQsFOKKMsH497d0"
 API_URL = "https://script.google.com/macros/s/AKfycbyRa-vQ2Q8H0lbnjD1aPXHFhpr682QmShcm_JDQCF777Jj37UyNJEGM2tTJ7rGpTmOr/exec"
 
-state = {}
-USERS = set()  # 🔥 avtomatik userlar
+USERS = set()
 
 HODIMLAR = [
     "Layla","Zufarbek","Nazokat","Bibizaxro",
@@ -36,20 +34,15 @@ HODIMLAR = [
 ]
 
 # ======================
-# API
-# ======================
 def get(url):
     try:
         return requests.get(url, timeout=5).json()
-    except Exception as e:
-        print("API ERROR:", e)
+    except:
         return None
 
 # ======================
-# FORMAT
-# ======================
 def fmt(d, title):
-    if not d or not isinstance(d, dict):
+    if not d:
         return "❌ Ma'lumot topilmadi"
 
     return f"""
@@ -66,38 +59,29 @@ def fmt(d, title):
 """
 
 # ======================
-# EXCEL
-# ======================
-async def send_excel(bot, rows, filename, chat_id):
+def send_excel(bot, rows, filename, chat_id):
     df = pd.DataFrame(rows)
     df.to_excel(filename, index=False)
-    await bot.send_document(chat_id=chat_id, document=open(filename, "rb"))
+    bot.send_document(chat_id=chat_id, document=open(filename, "rb"))
 
 # ======================
-# AUTO REPORT
-# ======================
-async def auto_report(context: ContextTypes.DEFAULT_TYPE):
-
+def auto_report(context):
+    bot = context.bot
     today = datetime.now().strftime("%Y-%m-%d")
 
     d = get(API_URL + "?type=today")
 
-    # 🔥 TEXT HAMMAGA
     for chat_id in USERS:
         try:
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text=fmt(d, f"📅 AUTO HISOBOT ({today})")
-            )
-        except Exception as e:
-            print("SEND ERROR:", e)
+            bot.send_message(chat_id=chat_id, text=fmt(d, f"📅 AUTO ({today})"))
+        except:
+            pass
 
-    # 🔥 EXCEL
     rows = []
 
     for h in HODIMLAR:
         d = get(API_URL + f"?type=day&date={today}&hodim={h}")
-        if d is not None:
+        if d:
             rows.append({
                 "Hodim": h,
                 "Mijoz": d["mijoz"],
@@ -112,70 +96,69 @@ async def auto_report(context: ContextTypes.DEFAULT_TYPE):
 
     for chat_id in USERS:
         try:
-            await send_excel(context.bot, rows, f"hisobot_{today}.xlsx", chat_id)
-        except Exception as e:
-            print("EXCEL ERROR:", e)
+            send_excel(bot, rows, f"hisobot_{today}.xlsx", chat_id)
+        except:
+            pass
 
 # ======================
-# START
-# ======================
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
+def start(update, context):
     chat_id = update.effective_chat.id
-    USERS.add(chat_id)  # 🔥 USER QO‘SHILDI
+    USERS.add(chat_id)
 
     kb = [
         ["📊 Umumiy","⚡ Real-time"],
         ["👤 Hodimlar","📊 Barcha hodimlar"]
     ]
 
-    await update.message.reply_text(
+    update.message.reply_text(
         "Tanlang:",
         reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True)
     )
 
 # ======================
-# HANDLER
-# ======================
-async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
+def handle(update, context):
     txt = update.message.text
     chat = update.effective_chat.id
 
     if txt == "📊 Umumiy":
-        await update.message.reply_text(fmt(get(API_URL+"?type=all"),"UMUMIY"))
+        update.message.reply_text(fmt(get(API_URL+"?type=all"),"UMUMIY"))
         return
 
     if txt == "⚡ Real-time":
-        await update.message.reply_text(fmt(get(API_URL+"?type=today"),"REAL-TIME"))
+        update.message.reply_text(fmt(get(API_URL+"?type=today"),"REAL-TIME"))
         return
 
     if txt == "👤 Hodimlar":
         kb = [HODIMLAR[i:i+3] for i in range(0,len(HODIMLAR),3)]
         kb.append(["⬅️ Ortga"])
-        state[chat] = "hodim"
-        await update.message.reply_text("Tanlang:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
+        context.user_data["state"] = "hodim"
+        update.message.reply_text("Tanlang:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
         return
 
     if txt == "⬅️ Ortga":
-        await start(update, context)
+        start(update, context)
         return
 
-    if state.get(chat) == "hodim":
-        await update.message.reply_text(
+    if context.user_data.get("state") == "hodim":
+        update.message.reply_text(
             fmt(get(API_URL+f"?type=hodim_oy&hodim={txt}"),f"{txt} (oy)")
         )
-        return
 
 # ======================
-# RUN
+def main():
+    updater = Updater(TOKEN)
+    dp = updater.dispatcher
+
+    dp.add_handler(CommandHandler("start", start))
+    dp.add_handler(MessageHandler(Filters.text, handle))
+
+    # AUTO REPORT (18:10)
+    updater.job_queue.run_daily(auto_report, time(hour=18, minute=10))
+
+    print("Bot ishlayapti...")
+    updater.start_polling()
+    updater.idle()
+
 # ======================
-app = ApplicationBuilder().token(TOKEN).build()
-
-app.add_handler(CommandHandler("start", start))
-app.add_handler(MessageHandler(filters.TEXT, handle))
-
-app.job_queue.run_daily(auto_report, time=time(hour=18, minute=10))
-
-print("Bot ishlayapti...")
-app.run_polling()
+if __name__ == "__main__":
+    main()
