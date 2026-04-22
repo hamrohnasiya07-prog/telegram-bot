@@ -5,7 +5,6 @@ import os
 import threading
 
 from http.server import BaseHTTPRequestHandler, HTTPServer
-
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 
@@ -15,6 +14,7 @@ TOKEN = "8547255151:AAEy3ZZOCFTNlsCd943vrQsFOKKMsH497d0"
 API_URL = "https://script.google.com/macros/s/AKfycbyRa-vQ2Q8H0lbnjD1aPXHFhpr682QmShcm_JDQCF777Jj37UyNJEGM2tTJ7rGpTmOr/exec"
 
 state = {}
+ADMINS = set()
 
 # ======================
 # KEEP ALIVE (Railway)
@@ -40,48 +40,37 @@ HODIMLAR = [
 # ======================
 def safe(d):
     base = {
-        "mijoz":0,
-        "qongiroq":0,
-        "muxlat":0,
-        "tolov":0,
-        "kechikdi":0,
-        "bog":0,
-        "muamoli":0,
-        "sud":0
+        "mijoz":0,"qongiroq":0,"muxlat":0,
+        "tolov":0,"kechikdi":0,"bog":0,
+        "muamoli":0,"sud":0
     }
-
     if not d:
         return base
-
     for k in base:
         if k not in d:
             d[k] = 0
-
     return d
 
 # ======================
 async def fetch(session, url):
     try:
         async with session.get(url, timeout=5) as res:
-            data = await res.json()
-            return safe(data)
+            return safe(await res.json())
     except:
         return safe(None)
 
 async def get_many(urls):
     async with aiohttp.ClientSession() as session:
-        tasks = [fetch(session, u) for u in urls]
-        return await asyncio.gather(*tasks)
+        return await asyncio.gather(*[fetch(session,u) for u in urls])
 
 # ======================
 def fmt(d, title):
     d = safe(d)
-
     return (
         f"📊 {title}\n\n"
-        f"👥 {d['mijoz']} | 📞 {d['qongiroq']} ta | 💰 {d['tolov']} so‘m\n"
-        f"📅 {d['muxlat']} kun | ⚖️ {d['sud']} ta\n"
-        f"⏰ {d['kechikdi']} | 🚫 {d['bog']} | ⚠️ {d['muamoli']}"
+        f"👥 Mijoz: {d['mijoz']} | 📞 Qo‘ng‘iroq: {d['qongiroq']} | 💰 To‘lov: {d['tolov']}\n"
+        f"📅 Muxlat: {d['muxlat']} | ⚖️ Sud: {d['sud']}\n"
+        f"⏰ Kechikdi: {d['kechikdi']} | 🚫 Bog‘lanmadi: {d['bog']} | ⚠️ Muamoli: {d['muamoli']}"
     )
 
 # ======================
@@ -95,6 +84,7 @@ async def send_excel(bot, rows, filename, chat_id):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat.id
     state[chat] = {"flow": "menu"}
+    ADMINS.add(chat)
 
     kb = [
         ["📊 Umumiy","⚡ Real-time"],
@@ -161,10 +151,8 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if s["flow"] == "hodim_day":
         h = s["hodim"]
-
         async with aiohttp.ClientSession() as session:
             d = await fetch(session, API_URL+f"?type=day&date={txt}&hodim={h}")
-
         return await update.message.reply_text(fmt(d, f"{h} ({txt})"))
 
     # ===== BARCHA =====
@@ -179,7 +167,6 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if txt == "📆 Oylik":
             urls = [API_URL+f"?type=hodim_oy&hodim={h}" for h in HODIMLAR]
             data = await get_many(urls)
-
             rows = [{"Hodim":HODIMLAR[i], **data[i]} for i in range(len(data))]
             return await send_excel(context.bot, rows, "oylik.xlsx", chat)
 
@@ -194,15 +181,37 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if s["flow"] == "all_day":
         urls = [API_URL+f"?type=day&date={txt}&hodim={h}" for h in HODIMLAR]
         data = await get_many(urls)
-
         rows = [{"Hodim":HODIMLAR[i], **data[i]} for i in range(len(data))]
         return await send_excel(context.bot, rows, f"{txt}.xlsx", chat)
+
+# ======================
+# 🔥 AUTO HISOBOT (18:10)
+async def auto_report(app):
+    while True:
+        now = datetime.now()
+
+        if now.hour == 18 and now.minute == 10:
+            async with aiohttp.ClientSession() as session:
+                d = await fetch(session, API_URL+"?type=today")
+
+            for user in ADMINS:
+                try:
+                    await app.bot.send_message(user, fmt(d, "📊 KUNLIK AVTO HISOBOT"))
+                except:
+                    pass
+
+            await asyncio.sleep(60)  # dublikat bo‘lmasin
+
+        await asyncio.sleep(20)
 
 # ======================
 app = ApplicationBuilder().token(TOKEN).build()
 
 app.add_handler(CommandHandler("start", start))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
+
+# AUTO START
+app.create_task(auto_report(app))
 
 print("Bot ishlayapti...")
 app.run_polling()
