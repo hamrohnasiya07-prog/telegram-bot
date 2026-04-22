@@ -17,7 +17,7 @@ state = {}
 ADMINS = set()
 
 # ======================
-# KEEP ALIVE (Railway)
+# KEEP ALIVE
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -185,7 +185,7 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await send_excel(context.bot, rows, f"{txt}.xlsx", chat)
 
 # ======================
-# 🔥 AUTO HISOBOT (18:10)
+# AUTO REPORT (18:10)
 async def auto_report(app):
     while True:
         now = datetime.now()
@@ -200,18 +200,19 @@ async def auto_report(app):
                 except:
                     pass
 
-            await asyncio.sleep(60)  # dublikat bo‘lmasin
+            await asyncio.sleep(60)
 
         await asyncio.sleep(20)
 
 # ======================
-app = ApplicationBuilder().token(TOKEN).build()
+async def on_startup(app):
+    asyncio.create_task(auto_report(app))
+
+# ======================
+app = ApplicationBuilder().token(TOKEN).post_init(on_startup).build()
 
 app.add_handler(CommandHandler("start", start))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
-
-# AUTO START
-app.create_task(auto_report(app))
 
 print("Bot ishlayapti...")
 app.run_polling()
