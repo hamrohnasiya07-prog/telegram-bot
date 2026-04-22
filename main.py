@@ -1,19 +1,26 @@
 import requests
 import pandas as pd
+import os
+import threading
+
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
+
 from datetime import datetime, timedelta, time
 
 # ======================
 # CONFIG
 # ======================
-TOKEN = "8547255151:AAEy3ZZOCFTNlsCd943vrQsFOKKMsH497d0"
-API_URL = "https://script.google.com/macros/s/AKfycbyRa-vQ2Q8H0lbnjD1aPXHFhpr682QmShcm_JDQCF777Jj37UyNJEGM2tTJ7rGpTmOr/exec"
+TOKEN = "SENING_TOKEN"
+API_URL = "SENING_API_URL"
 
-# 🔥 ADMINLAR (avtomatik yig'iladi)
-ADMINS = set()
+state = {}
 
-# ===== Railway server =====
+# ======================
+# RAILWAY SERVER
+# ======================
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -25,11 +32,10 @@ def run_server():
     HTTPServer(("0.0.0.0", port), Handler).serve_forever()
 
 threading.Thread(target=run_server, daemon=True).start()
-# ==========================
 
-state = {}
-
-# 🔥 MUHIM — SHEETS NOMIGA 100% MOS BO‘LSIN
+# ======================
+# HODIMLAR
+# ======================
 HODIMLAR = [
     "Layla","Zufarbek","Nazokat","Bibizaxro",
     "Moxinur","Abdurasul","Uzipa","Aziza",
@@ -72,49 +78,44 @@ async def send_excel(bot, rows, filename, chat_id):
     df = pd.DataFrame(rows)
     df.to_excel(filename, index=False)
     await bot.send_document(chat_id=chat_id, document=open(filename, "rb"))
+    os.remove(filename)
 
 # ======================
-# AUTO REPORT
+# AUTO REPORT (FIXED)
 # ======================
 async def auto_report(context: ContextTypes.DEFAULT_TYPE):
-
     today = datetime.now().strftime("%Y-%m-%d")
 
     d = get(API_URL + "?type=today")
-    await context.bot.send_message(
-        chat_id=CHAT_ID,
-        text=fmt(d, f"📅 AUTO HISOBOT ({today})")
-    )
 
-    rows = []
-
-    for h in HODIMLAR:
-        d = get(API_URL + f"?type=day&date={today}&hodim={h}")
-        if d is not None:
-            rows.append({
-                "Hodim": h,
-                "Mijoz": d["mijoz"],
-                "Qongiroq": d["qongiroq"],
-                "Muxlat": d["muxlat"],
-                "Tolov": d["tolov"],
-                "Kechikdi": d["kechikdi"],
-                "Boglanmadi": d["bog"],
-                "Muamoli": d["muamoli"],
-                "Sud": d["sud"]
-            })
-
-    if rows:
-        await send_excel(context.bot, rows, f"hisobot_{today}.xlsx", CHAT_ID)
+    # 🔥 barcha aktiv userlarga yuboradi
+    for chat_id in context.application.chat_data.keys():
+        try:
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=fmt(d, f"📅 AUTO HISOBOT ({today})")
+            )
+        except:
+            pass
 
 # ======================
 # START
 # ======================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+
+    # 🔥 userni saqlaymiz (DB o‘rniga)
+    context.application.chat_data[chat_id] = True
+
     kb = [
         ["📊 Umumiy","⚡ Real-time"],
         ["👤 Hodimlar","📊 Barcha hodimlar"]
     ]
-    await update.message.reply_text("Tanlang:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
+
+    await update.message.reply_text(
+        "Tanlang:",
+        reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True)
+    )
 
 # ======================
 # HANDLER
@@ -124,133 +125,35 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     txt = update.message.text
     chat = update.effective_chat.id
 
-    # UMUMIY
     if txt == "📊 Umumiy":
         await update.message.reply_text(fmt(get(API_URL+"?type=all"),"UMUMIY"))
         return
 
-    # REAL TIME
     if txt == "⚡ Real-time":
         await update.message.reply_text(fmt(get(API_URL+"?type=today"),"REAL-TIME"))
         return
 
-    # BARCHA HODIMLAR
     if txt == "📊 Barcha hodimlar":
         kb = [["📆 Oylik","📅 Kunlik"],["⬅️ Ortga"]]
         state[chat] = "all"
         await update.message.reply_text("Tanlang:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
         return
 
-    # ALL MODE
     if state.get(chat) == "all":
 
-        # OYLIK → EXCEL
         if txt == "📆 Oylik":
-
             rows = []
 
             for h in HODIMLAR:
                 d = get(API_URL+f"?type=hodim_oy&hodim={h}")
-                if d is not None:
-                    rows.append({
-                        "Hodim": h,
-                        "Mijoz": d["mijoz"],
-                        "Qongiroq": d["qongiroq"],
-                        "Muxlat": d["muxlat"],
-                        "Tolov": d["tolov"],
-                        "Kechikdi": d["kechikdi"],
-                        "Boglanmadi": d["bog"],
-                        "Muamoli": d["muamoli"],
-                        "Sud": d["sud"]
-                    })
+                if d:
+                    rows.append(d)
 
             if not rows:
-                await update.message.reply_text("❌ Ma'lumot topilmadi")
+                await update.message.reply_text("❌ Ma'lumot yo‘q")
                 return
 
             await send_excel(context.bot, rows, "oylik.xlsx", chat)
-            return
-
-        # KUNLIK
-        if txt == "📅 Kunlik":
-            today = datetime.now()
-            kb = [[(today - timedelta(days=i)).strftime("%Y-%m-%d")] for i in range(5)]
-            kb.append(["⬅️ Ortga"])
-            state[chat] = {"mode":"all_day"}
-            await update.message.reply_text("Sanani tanlang:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
-            return
-
-    # ALL DAY → EXCEL
-    if isinstance(state.get(chat), dict) and state[chat].get("mode") == "all_day":
-
-        if txt == "⬅️ Ortga":
-            await start(update, context)
-            return
-
-        rows = []
-
-        for h in HODIMLAR:
-            d = get(API_URL+f"?type=day&date={txt}&hodim={h}")
-            if d is not None:
-                rows.append({
-                    "Hodim": h,
-                    "Mijoz": d["mijoz"],
-                    "Qongiroq": d["qongiroq"],
-                    "Muxlat": d["muxlat"],
-                    "Tolov": d["tolov"],
-                    "Kechikdi": d["kechikdi"],
-                    "Boglanmadi": d["bog"],
-                    "Muamoli": d["muamoli"],
-                    "Sud": d["sud"]
-                })
-
-        if not rows:
-            await update.message.reply_text("❌ Ma'lumot topilmadi")
-            return
-
-        await send_excel(context.bot, rows, f"kunlik_{txt}.xlsx", chat)
-        return
-
-    # HODIMLAR
-    if txt == "👤 Hodimlar":
-        kb = [HODIMLAR[i:i+3] for i in range(0,len(HODIMLAR),3)]
-        kb.append(["⬅️ Ortga"])
-        state[chat] = "hodim"
-        await update.message.reply_text("Tanlang:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
-        return
-
-    # ORTGA
-    if txt == "⬅️ Ortga":
-        await start(update, context)
-        return
-
-    # HODIM TANLANDI
-    if state.get(chat) == "hodim":
-        state[chat] = {"hodim":txt}
-        kb = [["📅 Kunlik","📆 Oylik"],["⬅️ Ortga"]]
-        await update.message.reply_text("Tanlang:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
-        return
-
-    # HODIM LOGIKA
-    if isinstance(state.get(chat), dict):
-        h = state[chat]["hodim"]
-
-        if txt == "📆 Oylik":
-            await update.message.reply_text(fmt(get(API_URL+f"?type=hodim_oy&hodim={h}"),f"{h} (oy)"))
-            return
-
-        if txt == "📅 Kunlik":
-            today = datetime.now()
-            kb = [[(today - timedelta(days=i)).strftime("%Y-%m-%d")] for i in range(5)]
-            kb.append(["⬅️ Ortga"])
-            state[chat]["mode"]="day"
-            await update.message.reply_text("Sanani tanlang:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
-            return
-
-        if state[chat].get("mode") == "day":
-            await update.message.reply_text(
-                fmt(get(API_URL+f"?type=day&date={txt}&hodim={h}"),f"{h} ({txt})")
-            )
             return
 
 # ======================
