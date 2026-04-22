@@ -22,8 +22,6 @@ ADMINS = set()
 state = {}
 
 # ======================
-# SERVER (Railway)
-# ======================
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -46,7 +44,10 @@ HODIMLAR = [
 # ======================
 def get(url):
     try:
-        return requests.get(url, timeout=5).json()
+        r = requests.get(url, timeout=5)
+        if r.status_code == 200:
+            return r.json()
+        return None
     except:
         return None
 
@@ -55,21 +56,28 @@ def get_many(urls):
         return list(executor.map(get, urls))
 
 # ======================
-def fmt(d, title):
+def safe(d):
     if not d:
-        return "❌ Xatolik"
+        return {
+            "mijoz":0,"qongiroq":0,"muxlat":0,
+            "tolov":0,"kechikdi":0,"bog":0,
+            "muamoli":0,"sud":0
+        }
+    return d
 
+def fmt(d, title):
+    d = safe(d)
     return f"""
 📊 {title}
 
-👥 Mijozlar: {d.get('mijoz',0)}
-📞 Qo‘ng‘iroq: {d.get('qongiroq',0)}
-📅 Muxlat: {d.get('muxlat',0)}
-💰 To‘lov: {d.get('tolov',0)}
-⏰ Kechikdi: {d.get('kechikdi',0)}
-📵 Bog‘lanmadi: {d.get('bog',0)}
-⚠️ Muamoli: {d.get('muamoli',0)}
-⚖️ Sud: {d.get('sud',0)}
+👥 Mijozlar: {d['mijoz']}
+📞 Qo‘ng‘iroq: {d['qongiroq']}
+📅 Muxlat: {d['muxlat']}
+💰 To‘lov: {d['tolov']}
+⏰ Kechikdi: {d['kechikdi']}
+📵 Bog‘lanmadi: {d['bog']}
+⚠️ Muamoli: {d['muamoli']}
+⚖️ Sud: {d['sud']}
 """
 
 # ======================
@@ -87,7 +95,6 @@ async def send_excel(bot, rows, filename, chat_id):
     wb = load_workbook(filename)
     ws = wb.active
 
-    # HEADER STYLE
     header_fill = PatternFill(start_color="4F81BD", end_color="4F81BD", fill_type="solid")
 
     for cell in ws[1]:
@@ -95,38 +102,23 @@ async def send_excel(bot, rows, filename, chat_id):
         cell.alignment = Alignment(horizontal="center")
         cell.fill = header_fill
 
-    # ZEBRA STYLE
     for row in ws.iter_rows(min_row=2, max_row=ws.max_row):
         if row[0].row % 2 == 0:
             for cell in row:
                 cell.fill = PatternFill(start_color="DCE6F1", end_color="DCE6F1", fill_type="solid")
 
-    # AUTO WIDTH
     for col in ws.columns:
         max_length = 0
         col_letter = col[0].column_letter
-
         for cell in col:
             if cell.value:
                 max_length = max(max_length, len(str(cell.value)))
-
         ws.column_dimensions[col_letter].width = max_length + 4
 
     wb.save(filename)
 
     await bot.send_document(chat_id=chat_id, document=open(filename, "rb"))
     os.remove(filename)
-
-# ======================
-async def auto_report(context: ContextTypes.DEFAULT_TYPE):
-    today = datetime.now().strftime("%Y-%m-%d")
-    d = get(API_URL + "?type=today")
-
-    for chat_id in ADMINS:
-        try:
-            await context.bot.send_message(chat_id, fmt(d, f"📅 AUTO ({today})"))
-        except:
-            pass
 
 # ======================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -139,10 +131,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ["👤 Hodimlar","📊 Barcha hodimlar"]
     ]
 
-    await update.message.reply_text(
-        "Tanlang:",
-        reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True)
-    )
+    await update.message.reply_text("Tanlang:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
 
 # ======================
 async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -166,7 +155,7 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await start(update, context)
         return
 
-    # ===== HODIMLAR =====
+    # ===== HODIM =====
     if txt == "👤 Hodimlar":
         kb = [HODIMLAR[i:i+3] for i in range(0,len(HODIMLAR),3)]
         kb.append(["⬅️ Ortga"])
@@ -174,75 +163,20 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Hodim tanlang:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
         return
 
-    # ===== BARCHA =====
-    if txt == "📊 Barcha hodimlar":
-        kb = [["📆 Oylik","📅 Kunlik"],["⬅️ Ortga"]]
-        state[chat] = {"type":"all"}
-        await update.message.reply_text("Tanlang:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
-        return
-
-    # ===== BARCHA OYLIK =====
-    if s.get("type") == "all" and txt == "📆 Oylik":
-
-        urls = [API_URL + f"?type=hodim_oy&hodim={h}" for h in HODIMLAR]
-        results = get_many(urls)
-
-        rows = []
-        for i, d in enumerate(results):
-            if d:
-                rows.append({"Hodim": HODIMLAR[i], **d})
-
-        await send_excel(context.bot, rows, "oylik.xlsx", chat)
-        return
-
-    # ===== BARCHA KUNLIK =====
-    if s.get("type") == "all" and txt == "📅 Kunlik":
-        today = datetime.now()
-        kb = [[(today - timedelta(days=i)).strftime("%Y-%m-%d")] for i in range(5)]
-        kb.append(["⬅️ Ortga"])
-
-        state[chat]["mode"] = "all_day"
-
-        await update.message.reply_text("Sanani tanlang:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
-        return
-
-    if s.get("mode") == "all_day":
-
-        if not txt.startswith("202"):
-            return
-
-        urls = [API_URL + f"?type=day&date={txt}&hodim={h}" for h in HODIMLAR]
-        results = get_many(urls)
-
-        rows = []
-        for i, d in enumerate(results):
-            if d:
-                rows.append({"Hodim": HODIMLAR[i], **d})
-
-        await send_excel(context.bot, rows, f"{txt}.xlsx", chat)
-        return
-
-    # ===== HODIM TANLASH =====
     if s.get("type") == "hodim" and "hodim" not in s:
         state[chat]["hodim"] = txt
-
         kb = [["📆 Oylik","📅 Kunlik"],["⬅️ Ortga"]]
         await update.message.reply_text("Tanlang:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
         return
 
-    # ===== HODIM OYLIK =====
-    if s.get("type") == "hodim" and txt == "📆 Oylik":
-        h = s.get("hodim")
-
-        await update.message.reply_text(
-            fmt(get(API_URL+f"?type=hodim_oy&hodim={h}"),f"{h} (oy)")
-        )
-        return
-
-    # ===== HODIM KUNLIK =====
     if s.get("type") == "hodim" and txt == "📅 Kunlik":
+
+        # 🔥 16 sanadan boshlab
         today = datetime.now()
-        kb = [[(today - timedelta(days=i)).strftime("%Y-%m-%d")] for i in range(5)]
+        dates = [(today - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(0, 10)]
+        dates = sorted(dates)  # eski → yangi
+
+        kb = [[d] for d in dates]
         kb.append(["⬅️ Ortga"])
 
         state[chat]["mode"] = "day"
@@ -253,9 +187,9 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if s.get("mode") == "day":
         h = s.get("hodim")
 
-        await update.message.reply_text(
-            fmt(get(API_URL+f"?type=day&date={txt}&hodim={h}"),f"{h} ({txt})")
-        )
+        d = safe(get(API_URL+f"?type=day&date={txt}&hodim={h}"))
+
+        await update.message.reply_text(fmt(d, f"{h} ({txt})"))
         return
 
 # ======================
@@ -263,8 +197,6 @@ app = ApplicationBuilder().token(TOKEN).build()
 
 app.add_handler(CommandHandler("start", start))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
-
-app.job_queue.run_daily(auto_report, time=time(hour=18, minute=10))
 
 print("Bot ishlayapti...")
 app.run_polling()
