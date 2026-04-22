@@ -132,7 +132,7 @@ async def auto_report(context: ContextTypes.DEFAULT_TYPE):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     ADMINS.add(chat_id)
-    state[chat_id] = None
+    state[chat_id] = {}
 
     kb = [
         ["📊 Umumiy","⚡ Real-time"],
@@ -149,6 +149,7 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     txt = update.message.text
     chat = update.effective_chat.id
+    s = state.get(chat, {})
 
     if not txt:
         return
@@ -165,45 +166,47 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await start(update, context)
         return
 
+    # ===== HODIMLAR =====
     if txt == "👤 Hodimlar":
         kb = [HODIMLAR[i:i+3] for i in range(0,len(HODIMLAR),3)]
         kb.append(["⬅️ Ortga"])
-        state[chat] = "hodim"
+        state[chat] = {"type":"hodim"}
         await update.message.reply_text("Hodim tanlang:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
         return
 
+    # ===== BARCHA =====
     if txt == "📊 Barcha hodimlar":
         kb = [["📆 Oylik","📅 Kunlik"],["⬅️ Ortga"]]
-        state[chat] = {"mode":"all"}
+        state[chat] = {"type":"all"}
         await update.message.reply_text("Tanlang:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
         return
 
-    # ===== OYLIK =====
-    if isinstance(state.get(chat), dict) and state[chat].get("mode") == "all":
+    # ===== BARCHA OYLIK =====
+    if s.get("type") == "all" and txt == "📆 Oylik":
 
-        if txt == "📆 Oylik":
+        urls = [API_URL + f"?type=hodim_oy&hodim={h}" for h in HODIMLAR]
+        results = get_many(urls)
 
-            urls = [API_URL + f"?type=hodim_oy&hodim={h}" for h in HODIMLAR]
-            results = get_many(urls)
+        rows = []
+        for i, d in enumerate(results):
+            if d:
+                rows.append({"Hodim": HODIMLAR[i], **d})
 
-            rows = []
-            for i, d in enumerate(results):
-                if d:
-                    rows.append({"Hodim": HODIMLAR[i], **d})
+        await send_excel(context.bot, rows, "oylik.xlsx", chat)
+        return
 
-            await send_excel(context.bot, rows, "oylik.xlsx", chat)
-            return
+    # ===== BARCHA KUNLIK =====
+    if s.get("type") == "all" and txt == "📅 Kunlik":
+        today = datetime.now()
+        kb = [[(today - timedelta(days=i)).strftime("%Y-%m-%d")] for i in range(5)]
+        kb.append(["⬅️ Ortga"])
 
-        if txt == "📅 Kunlik":
-            today = datetime.now()
-            kb = [[(today - timedelta(days=i)).strftime("%Y-%m-%d")] for i in range(5)]
-            kb.append(["⬅️ Ortga"])
-            state[chat]["mode"] = "all_day"
-            await update.message.reply_text("Sanani tanlang:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
-            return
+        state[chat]["mode"] = "all_day"
 
-    # ===== KUNLIK =====
-    if isinstance(state.get(chat), dict) and state[chat].get("mode") == "all_day":
+        await update.message.reply_text("Sanani tanlang:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
+        return
+
+    if s.get("mode") == "all_day":
 
         if not txt.startswith("202"):
             return
@@ -216,42 +219,44 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if d:
                 rows.append({"Hodim": HODIMLAR[i], **d})
 
-        if not rows:
-            await update.message.reply_text("❌ Ma'lumot yo‘q")
-            return
-
         await send_excel(context.bot, rows, f"{txt}.xlsx", chat)
         return
 
     # ===== HODIM TANLASH =====
-    if state.get(chat) == "hodim":
-        state[chat] = {"hodim": txt}
+    if s.get("type") == "hodim" and "hodim" not in s:
+        state[chat]["hodim"] = txt
+
         kb = [["📆 Oylik","📅 Kunlik"],["⬅️ Ortga"]]
         await update.message.reply_text("Tanlang:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
         return
 
-    # ===== HODIM MODE =====
-    if isinstance(state.get(chat), dict) and "hodim" in state[chat]:
+    # ===== HODIM OYLIK =====
+    if s.get("type") == "hodim" and txt == "📆 Oylik":
+        h = s.get("hodim")
 
-        h = state[chat]["hodim"]
+        await update.message.reply_text(
+            fmt(get(API_URL+f"?type=hodim_oy&hodim={h}"),f"{h} (oy)")
+        )
+        return
 
-        if txt == "📆 Oylik":
-            await update.message.reply_text(fmt(get(API_URL+f"?type=hodim_oy&hodim={h}"),f"{h} (oy)"))
-            return
+    # ===== HODIM KUNLIK =====
+    if s.get("type") == "hodim" and txt == "📅 Kunlik":
+        today = datetime.now()
+        kb = [[(today - timedelta(days=i)).strftime("%Y-%m-%d")] for i in range(5)]
+        kb.append(["⬅️ Ortga"])
 
-        if txt == "📅 Kunlik":
-            today = datetime.now()
-            kb = [[(today - timedelta(days=i)).strftime("%Y-%m-%d")] for i in range(5)]
-            kb.append(["⬅️ Ortga"])
-            state[chat]["mode"] = "day"
-            await update.message.reply_text("Sanani tanlang:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
-            return
+        state[chat]["mode"] = "day"
 
-        if state[chat].get("mode") == "day":
-            await update.message.reply_text(
-                fmt(get(API_URL+f"?type=day&date={txt}&hodim={h}"),f"{h} ({txt})")
-            )
-            return
+        await update.message.reply_text("Sanani tanlang:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
+        return
+
+    if s.get("mode") == "day":
+        h = s.get("hodim")
+
+        await update.message.reply_text(
+            fmt(get(API_URL+f"?type=day&date={txt}&hodim={h}"),f"{h} ({txt})")
+        )
+        return
 
 # ======================
 app = ApplicationBuilder().token(TOKEN).build()
