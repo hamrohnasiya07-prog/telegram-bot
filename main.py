@@ -9,10 +9,10 @@ import pandas as pd
 from datetime import datetime
 
 # ====== CONFIG ======
-TOKEN = "SENING_TOKEN"
-API_URL = "SENING_GOOGLE_SCRIPT_URL"
+TOKEN = "8547255151:AAEy3ZZOCFTNlsCd943vrQsFOKKMsH497d0"
+API_URL = "https://script.google.com/macros/s/AKfycbyRa-vQ2Q8H0lbnjD1aPXHFhpr682QmShcm_JDQCF777Jj37UyNJEGM2tTJ7rGpTmOr/exec"
 
-ADMIN_ID = 123456789  # ozingni ID yoz
+# ADMIN_ID = 123456789  # ozingni ID yoz
 
 USERS = set()
 
