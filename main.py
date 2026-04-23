@@ -2,9 +2,7 @@ import aiohttp
 import asyncio
 import pandas as pd
 import os
-import threading
 
-from http.server import BaseHTTPRequestHandler, HTTPServer
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 
@@ -13,24 +11,9 @@ from datetime import datetime, timedelta
 TOKEN = "8547255151:AAEy3ZZOCFTNlsCd943vrQsFOKKMsH497d0"
 API_URL = "https://script.google.com/macros/s/AKfycbyRa-vQ2Q8H0lbnjD1aPXHFhpr682QmShcm_JDQCF777Jj37UyNJEGM2tTJ7rGpTmOr/exec"
 
-state = {}
-ADMINS = set()
-
 # ======================
-# KEEP ALIVE
-class Handler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b'OK')
+USERS = {}   # chat_id -> {step, hodim, mode, date}
 
-def run_server():
-    port = int(os.environ.get("PORT", 8080))
-    HTTPServer(("0.0.0.0", port), Handler).serve_forever()
-
-threading.Thread(target=run_server, daemon=True).start()
-
-# ======================
 HODIMLAR = [
     "Layla","Zufarbek","Nazokat","Bibizaxro",
     "Moxinur","Abdurasul","Uzipa","Aziza",
@@ -40,9 +23,9 @@ HODIMLAR = [
 # ======================
 def safe(d):
     base = {
-        "mijoz":0,"qongiroq":0,"muxlat":0,
-        "tolov":0,"kechikdi":0,"bog":0,
-        "muamoli":0,"sud":0
+        "mijoz":0,"qongiroq":0,"tolov":0,
+        "muxlat":0,"sud":0,"kechikdi":0,
+        "bog":0,"muamoli":0
     }
     if not d:
         return base
@@ -52,19 +35,15 @@ def safe(d):
     return d
 
 # ======================
-async def fetch(session, url):
+async def api(params):
     try:
-        async with session.get(url, timeout=5) as res:
-            return safe(await res.json())
+        async with aiohttp.ClientSession() as s:
+            async with s.get(API_URL, params=params, timeout=6) as r:
+                return await r.json()
     except:
-        return safe(None)
-
-async def get_many(urls):
-    async with aiohttp.ClientSession() as session:
-        return await asyncio.gather(*[fetch(session,u) for u in urls])
+        return None
 
 # ======================
-# 🔥 VERTICAL FORMAT
 def fmt(d, title):
     d = safe(d)
     return (
@@ -87,137 +66,133 @@ async def send_excel(bot, rows, filename, chat_id):
     os.remove(filename)
 
 # ======================
+def main_menu():
+    return ReplyKeyboardMarkup([
+        ["📊 Umumiy"],
+        ["📅 Kunlik hisobot"],
+        ["👤 Xodimlar","📊 Barcha xodimlar"]
+    ], resize_keyboard=True)
+
+def back_kb():
+    return ReplyKeyboardMarkup([["⬅️ Ortga"]], resize_keyboard=True)
+
+# ======================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat.id
-    state[chat] = {"flow": "menu"}
-    ADMINS.add(chat)
+    USERS[chat] = {"step":"menu"}
+    await update.message.reply_text("Tanlang:", reply_markup=main_menu())
 
-    kb = [
-        ["📊 Umumiy","⚡ Real-time"],
-        ["👤 Hodimlar","📊 Barcha hodimlar"]
-    ]
-
-    await update.message.reply_text("Tanlang:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
+# ======================
+def last_dates(n=7):
+    return [(datetime.now()-timedelta(days=i)).strftime("%Y-%m-%d") for i in range(n)]
 
 # ======================
 async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-    txt = update.message.text
     chat = update.effective_chat.id
-    s = state.get(chat, {"flow":"menu"})
+    text = update.message.text
+    u = USERS.get(chat, {"step":"menu"})
 
-    if not txt:
-        return
+    if text == "⬅️ Ortga":
+        USERS[chat] = {"step":"menu"}
+        return await update.message.reply_text("Tanlang:", reply_markup=main_menu())
 
-    if txt == "⬅️ Ortga":
-        return await start(update, context)
+    # ===== UMUMIY (o‘zgarmaydi) =====
+    if text == "📊 Umumiy":
+        d = await api({"type":"all"})
+        return await update.message.reply_text(fmt(d,"UMUMIY"))
 
-    # ===== UMUMIY =====
-    if txt == "📊 Umumiy":
-        async with aiohttp.ClientSession() as session:
-            d = await fetch(session, API_URL+"?type=all")
-        return await update.message.reply_text(fmt(d, "UMUMIY"))
+    # ===== YANGI: KUNLIK HISOBOT (O ustun bo‘yicha) =====
+    if text == "📅 Kunlik hisobot":
+        USERS[chat] = {"step":"daily_pick_date"}
+        kb = [[d] for d in last_dates(10)] + [["⬅️ Ortga"]]
+        return await update.message.reply_text("Sanani tanlang:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
 
-    if txt == "⚡ Real-time":
-        async with aiohttp.ClientSession() as session:
-            d = await fetch(session, API_URL+"?type=today")
-        return await update.message.reply_text(fmt(d, "REAL-TIME"))
+    if u["step"] == "daily_pick_date":
+        date = text
+        # umumiy kunlik summary
+        d = await api({"type":"daily_summary","date":date})
+        # barcha xodimlar bo‘yicha Excel (faqat O ustunda sana bor yozuvlar)
+        rows = await api({"type":"employees_daily_excel","date":date}) or []
+        await update.message.reply_text(fmt(d, f"KUNLIK ({date})"))
+        return await send_excel(context.bot, rows, f"kunlik_{date}.xlsx", chat)
 
-    # ===== HODIMLAR =====
-    if txt == "👤 Hodimlar":
-        state[chat] = {"flow":"hodim_list"}
-
-        kb = [HODIMLAR[i:i+3] for i in range(0,len(HODIMLAR),3)]
-        kb.append(["⬅️ Ortga"])
-
-        return await update.message.reply_text("Hodim tanlang:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
-
-    if s["flow"] == "hodim_list":
-        state[chat] = {"flow":"hodim_menu","hodim":txt.strip()}
-
+    # ===== BARCHA XODIMLAR (faqat Excel) =====
+    if text == "📊 Barcha xodimlar":
+        USERS[chat] = {"step":"all_menu"}
         kb = [["📆 Oylik","📅 Kunlik"],["⬅️ Ortga"]]
         return await update.message.reply_text("Tanlang:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
 
-    if s["flow"] == "hodim_menu":
+    if u["step"] == "all_menu":
+        if text == "📆 Oylik":
+            rows = await api({"type":"employees_month_excel"}) or []
+            return await send_excel(context.bot, rows, "barcha_oylik.xlsx", chat)
 
-        h = s["hodim"]
-
-        if txt == "📆 Oylik":
-            async with aiohttp.ClientSession() as session:
-                d = await fetch(session, API_URL+f"?type=month&hodim={h}")
-            return await update.message.reply_text(fmt(d, h))
-
-        if txt == "📅 Kunlik":
-            dates = [(datetime.now()-timedelta(days=i)).strftime("%Y-%m-%d") for i in range(7)]
-            kb = [[d] for d in dates]
-            kb.append(["⬅️ Ortga"])
-
-            state[chat]["flow"] = "hodim_day"
+        if text == "📅 Kunlik":
+            USERS[chat] = {"step":"all_day_pick"}
+            kb = [[d] for d in last_dates(10)] + [["⬅️ Ortga"]]
             return await update.message.reply_text("Sanani tanlang:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
 
-    if s["flow"] == "hodim_day":
-        h = s["hodim"]
-        async with aiohttp.ClientSession() as session:
-            d = await fetch(session, API_URL+f"?type=day&date={txt}&hodim={h}")
-        return await update.message.reply_text(fmt(d, f"{h} ({txt})"))
+    if u["step"] == "all_day_pick":
+        date = text
+        rows = await api({"type":"employees_daily_excel","date":date}) or []
+        return await send_excel(context.bot, rows, f"barcha_{date}.xlsx", chat)
 
-    # ===== BARCHA =====
-    if txt == "📊 Barcha hodimlar":
-        state[chat] = {"flow":"all"}
+    # ===== XODIMLAR =====
+    if text == "👤 Xodimlar":
+        USERS[chat] = {"step":"emp_pick"}
+        kb = [HODIMLAR[i:i+3] for i in range(0,len(HODIMLAR),3)] + [["⬅️ Ortga"]]
+        return await update.message.reply_text("Xodim tanlang:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
 
+    if u["step"] == "emp_pick":
+        USERS[chat] = {"step":"emp_range","hodim":text.strip()}
         kb = [["📆 Oylik","📅 Kunlik"],["⬅️ Ortga"]]
         return await update.message.reply_text("Tanlang:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
 
-    if s["flow"] == "all":
+    if u["step"] == "emp_range":
+        if text == "📆 Oylik":
+            USERS[chat]["step"] = "emp_view"
+            USERS[chat]["range"] = "month"
+            kb = [["📋 Jadval","📄 Excel"],["⬅️ Ortga"]]
+            return await update.message.reply_text("Ko‘rish turini tanlang:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
 
-        if txt == "📆 Oylik":
-            urls = [API_URL+f"?type=month&hodim={h.strip()}" for h in HODIMLAR]
-            data = await get_many(urls)
-            rows = [{"Hodim":HODIMLAR[i], **data[i]} for i in range(len(data))]
-            return await send_excel(context.bot, rows, "oylik.xlsx", chat)
-
-        if txt == "📅 Kunlik":
-            dates = [(datetime.now()-timedelta(days=i)).strftime("%Y-%m-%d") for i in range(7)]
-            kb = [[d] for d in dates]
-            kb.append(["⬅️ Ortga"])
-
-            state[chat]["flow"] = "all_day"
+        if text == "📅 Kunlik":
+            USERS[chat]["step"] = "emp_day_pick"
+            kb = [[d] for d in last_dates(10)] + [["⬅️ Ortga"]]
             return await update.message.reply_text("Sanani tanlang:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
 
-    if s["flow"] == "all_day":
-        urls = [API_URL+f"?type=day&date={txt}&hodim={h.strip()}" for h in HODIMLAR]
-        data = await get_many(urls)
-        rows = [{"Hodim":HODIMLAR[i], **data[i]} for i in range(len(data))]
-        return await send_excel(context.bot, rows, f"{txt}.xlsx", chat)
+    if u["step"] == "emp_day_pick":
+        USERS[chat]["step"] = "emp_view"
+        USERS[chat]["range"] = "day"
+        USERS[chat]["date"] = text
+        kb = [["📋 Jadval","📄 Excel"],["⬅️ Ortga"]]
+        return await update.message.reply_text("Ko‘rish turini tanlang:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
+
+    if u["step"] == "emp_view":
+        h = u["hodim"]
+        r = u["range"]
+        date = u.get("date")
+
+        if text == "📋 Jadval":
+            params = {"type":"employee_summary","hodim":h,"range":r}
+            if r == "day":
+                params["date"] = date
+            d = await api(params)
+            title = f"{h} ({'oy' if r=='month' else date})"
+            return await update.message.reply_text(fmt(d, title))
+
+        if text == "📄 Excel":
+            params = {"type":"employee_excel","hodim":h,"range":r}
+            if r == "day":
+                params["date"] = date
+            rows = await api(params) or []
+            fname = f"{h}_{'oylik' if r=='month' else date}.xlsx"
+            return await send_excel(context.bot, rows, fname, chat)
 
 # ======================
-# AUTO REPORT
-async def auto_report(app):
-    while True:
-        now = datetime.now()
-        if now.hour == 18 and now.minute == 10:
-            async with aiohttp.ClientSession() as session:
-                d = await fetch(session, API_URL+"?type=today")
-
-            for user in ADMINS:
-                try:
-                    await app.bot.send_message(user, fmt(d, "📊 KUNLIK AVTO HISOBOT"))
-                except:
-                    pass
-
-            await asyncio.sleep(60)
-
-        await asyncio.sleep(20)
-
-# ======================
-async def on_startup(app):
-    asyncio.create_task(auto_report(app))
-
-# ======================
-app = ApplicationBuilder().token(TOKEN).post_init(on_startup).build()
+app = ApplicationBuilder().token(TOKEN).build()
 
 app.add_handler(CommandHandler("start", start))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
 
-print("Bot ishlayapti...")
+print("Bot ishga tushdi")
 app.run_polling()
