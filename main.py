@@ -1,11 +1,9 @@
 import aiohttp
-import asyncio
 import pandas as pd
 import os
 
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
-
 from datetime import datetime, timedelta
 
 TOKEN = "8547255151:AAEy3ZZOCFTNlsCd943vrQsFOKKMsH497d0"
@@ -15,15 +13,10 @@ USERS = {}
 
 # ======================
 def safe(d):
-    base = {
-        "mijoz":0,"qongiroq":0,"muxlat":0,
-        "tolov":0,"muamoli":0,"sud":0,"bog":0
-    }
-    if not d:
-        return base
+    base = {"mijoz":0,"qongiroq":0,"muxlat":0,"tolov":0,"muamoli":0,"sud":0,"bog":0}
+    if not d: return base
     for k in base:
-        if k not in d:
-            d[k] = 0
+        if k not in d: d[k] = 0
     return d
 
 # ======================
@@ -51,10 +44,16 @@ def fmt(d, title):
 
 # ======================
 async def send_excel(bot, rows, filename, chat_id):
+
     if not rows:
         return await bot.send_message(chat_id, "❌ Ma'lumot topilmadi")
 
     df = pd.DataFrame(rows)
+
+    df = df[["hodim","mijoz","qongiroq","tolov","muxlat","sud","muamoli","bog"]]
+
+    df.columns = ["Hodim","Mijoz","Qo‘ng‘iroq","To‘lov","Muxlat","Sud","Muamoli","Bog‘lanmadi"]
+
     df.to_excel(filename, index=False)
 
     await bot.send_document(chat_id=chat_id, document=open(filename, "rb"))
@@ -86,8 +85,7 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         d = await api({"type":"all"})
         return await update.message.reply_text(fmt(d,"UMUMIY"))
 
-    # ======================
-    # 📅 KUNLIK HISOBOT
+    # ===== KUNLIK =====
     if text == "📅 Kunlik hisobot":
         USERS[chat] = {"step":"date"}
         kb = [[d] for d in dates()]
@@ -116,5 +114,5 @@ app = ApplicationBuilder().token(TOKEN).build()
 app.add_handler(CommandHandler("start", start))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
 
-print("BOT ISHLAYAPTI")
+print("ISHGA TUSHDI")
 app.run_polling()
