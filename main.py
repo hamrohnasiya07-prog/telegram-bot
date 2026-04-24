@@ -1,118 +1,137 @@
-import aiohttp
-import pandas as pd
-import os
-
-from telegram import Update, ReplyKeyboardMarkup
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
-from datetime import datetime, timedelta
+import aiohttp, os
+from telegram import *
+from telegram.ext import *
+from datetime import datetime, timedelta, time
+from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill
 
 TOKEN = "8547255151:AAEy3ZZOCFTNlsCd943vrQsFOKKMsH497d0"
-API_URL = "https://script.google.com/macros/s/AKfycbyRa-vQ2Q8H0lbnjD1aPXHFhpr682QmShcm_JDQCF777Jj37UyNJEGM2tTJ7rGpTmOr/exec"
+API = "https://script.google.com/macros/s/AKfycbzll_uznQE4MYgfjHu4wc26rzlPsR9wPPwj4k761CiOWFKPLf4IcCYfmHveJh_Nxhl5/exec"
 
 USERS = {}
 
-# ======================
-def safe(d):
-    base = {"mijoz":0,"qongiroq":0,"muxlat":0,"tolov":0,"muamoli":0,"sud":0,"bog":0}
-    if not d: return base
-    for k in base:
-        if k not in d: d[k] = 0
-    return d
+# ===== API =====
+async def api(p):
+    async with aiohttp.ClientSession() as s:
+        async with s.get(API, params=p) as r:
+            return await r.json()
 
-# ======================
-async def api(params):
-    try:
-        async with aiohttp.ClientSession() as s:
-            async with s.get(API_URL, params=params, timeout=7) as r:
-                return await r.json()
-    except:
-        return None
-
-# ======================
-def fmt(d, title):
-    d = safe(d)
-    return (
-        f"📊 {title}\n\n"
-        f"👥 Mijoz: {d['mijoz']}\n"
-        f"📞 Qo‘ng‘iroq: {d['qongiroq']}\n"
-        f"💰 To‘lov: {d['tolov']}\n"
-        f"📅 Muxlat: {d['muxlat']}\n"
-        f"⚖️ Sud: {d['sud']}\n"
-        f"🚫 Bog‘lanmadi: {d['bog']}\n"
-        f"⚠️ Muamoli: {d['muamoli']}"
-    )
-
-# ======================
-async def send_excel(bot, rows, filename, chat_id):
-
-    if not rows:
-        return await bot.send_message(chat_id, "❌ Ma'lumot topilmadi")
-
-    df = pd.DataFrame(rows)
-
-    df = df[["hodim","mijoz","qongiroq","tolov","muxlat","sud","muamoli","bog"]]
-
-    df.columns = ["Hodim","Mijoz","Qo‘ng‘iroq","To‘lov","Muxlat","Sud","Muamoli","Bog‘lanmadi"]
-
-    df.to_excel(filename, index=False)
-
-    await bot.send_document(chat_id=chat_id, document=open(filename, "rb"))
-    os.remove(filename)
-
-# ======================
+# ===== DATE LIST =====
 def dates():
     return [(datetime.now()-timedelta(days=i)).strftime("%Y-%m-%d") for i in range(7)]
 
-# ======================
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    USERS[update.effective_chat.id] = {"step":"menu"}
+# ===== MESSAGE =====
+def format_msg(d,title):
+    return f"""
+📊 {title}
 
-    kb = [
-        ["📊 Umumiy"],
-        ["📅 Kunlik hisobot"]
-    ]
+👥 Mijoz: {d['mijoz']}
+📞 Qo‘ng‘iroq: {d['q']}
+💰 To‘lov: {d['t']}
+🚫 Bog‘lanmadi: {d['bog']}
+⚖️ Sud: {d['sud']}
+⚠️ Muamoli: {d['mu']}
+"""
 
-    await update.message.reply_text("Tanlang:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
+# ===== EXCEL DESIGN =====
+def make_excel(rows, filename):
+    wb = Workbook()
+    ws = wb.active
 
-# ======================
-async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    headers = ["Hodim","Mijoz","Qo‘ng‘iroq","To‘lov","Bog‘lanmadi","Sud","Muamoli"]
+    ws.append(headers)
 
-    chat = update.effective_chat.id
-    text = update.message.text
-    user = USERS.get(chat, {"step":"menu"})
+    for cell in ws[1]:
+        cell.font = Font(bold=True)
+        cell.fill = PatternFill(start_color="00C0FF", fill_type="solid")
 
-    if text == "📊 Umumiy":
-        d = await api({"type":"all"})
-        return await update.message.reply_text(fmt(d,"UMUMIY"))
+    for r in rows:
+        ws.append([
+            r["hodim"],
+            r["mijoz"],
+            r["q"],
+            r["t"],
+            r["bog"],
+            r["sud"],
+            r["mu"]
+        ])
 
-    # ===== KUNLIK =====
-    if text == "📅 Kunlik hisobot":
-        USERS[chat] = {"step":"date"}
-        kb = [[d] for d in dates()]
-        return await update.message.reply_text("Sanani tanlang:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
+    wb.save(filename)
 
-    if user["step"] == "date":
+# ===== AUTO REPORT =====
+async def auto_report(context):
+    today = datetime.now().strftime("%Y-%m-%d")
+    rows = await api({"type":"daily_all","date":today})
 
-        date = text
+    if not rows:
+        return
 
-        d = await api({"type":"daily_summary","date":date})
-        top = await api({"type":"top","date":date})
-        rows = await api({"type":"employees_daily_excel","date":date})
+    total={"mijoz":0,"q":0,"t":0,"bog":0,"sud":0,"mu":0}
 
-        msg = fmt(d, f"KUNLIK ({date})")
+    for r in rows:
+        total["mijoz"]+=r["mijoz"]
+        total["q"]+=r["q"]
+        total["t"]+=r["t"]
+        total["bog"]+=r["bog"]
+        total["sud"]+=r["sud"]
+        total["mu"]+=r["mu"]
 
-        if top and top.get("hodim"):
-            msg += f"\n\n🏆 TOP: {top['hodim']} ({top['tolov']})"
+    text = format_msg(total,f"KUNLIK ({today})")
 
-        await update.message.reply_text(msg)
+    for u in USERS:
+        try:
+            await context.bot.send_message(chat_id=u,text=text)
+        except:
+            pass
 
-        return await send_excel(context.bot, rows, f"kunlik_{date}.xlsx", chat)
+# ===== START =====
+async def start(u,c):
+    USERS[u.effective_chat.id]=True
+    kb=[["📅 Hodim"],["📄 Barcha hodimlar"]]
+    await u.message.reply_text("Tanlang:",reply_markup=ReplyKeyboardMarkup(kb,resize_keyboard=True))
 
-# ======================
-app = ApplicationBuilder().token(TOKEN).build()
+# ===== HANDLE =====
+async def handle(u,c):
+    chat=u.effective_chat.id
+    t=u.message.text
+    state=USERS.get(chat,{})
 
-app.add_handler(CommandHandler("start", start))
-app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
+    if t=="📅 Hodim":
+        USERS[chat]={"step":"hodim"}
+        kb=[[x] for x in ["Zufarbek","Layla","Nazokat","Bibizaxro"]]
+        return await u.message.reply_text("Hodim:",reply_markup=ReplyKeyboardMarkup(kb,resize_keyboard=True))
 
-print("ISHGA TUSHDI")
+    if state.get("step")=="hodim":
+        USERS[chat]={"step":"date","hodim":t}
+        kb=[[d] for d in dates()]
+        return await u.message.reply_text("Sana:",reply_markup=ReplyKeyboardMarkup(kb,resize_keyboard=True))
+
+    if state.get("step")=="date":
+        d=await api({"type":"daily_hodim","date":t,"hodim":state["hodim"]})
+        return await u.message.reply_text(format_msg(d,f"{state['hodim']} ({t})"))
+
+    if t=="📄 Barcha hodimlar":
+        USERS[chat]={"step":"all_date"}
+        kb=[[d] for d in dates()]
+        return await u.message.reply_text("Sana:",reply_markup=ReplyKeyboardMarkup(kb,resize_keyboard=True))
+
+    if state.get("step")=="all_date":
+        rows=await api({"type":"daily_all","date":t})
+
+        file=f"{t}.xlsx"
+        make_excel(rows,file)
+
+        await u.message.reply_document(document=open(file,"rb"))
+        os.remove(file)
+
+# ===== APP =====
+app=ApplicationBuilder().token(TOKEN).build()
+
+app.add_handler(CommandHandler("start",start))
+app.add_handler(MessageHandler(filters.TEXT,handle))
+
+# ⏰ AUTO 18:10
+app.job_queue.run_daily(auto_report, time=time(hour=18, minute=10))
+
+print("BOT ISHLAYAPTI")
 app.run_polling()
