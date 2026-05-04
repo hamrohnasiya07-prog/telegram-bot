@@ -1,5 +1,5 @@
-python-telegram-bot[job-queue]==20.7
-aiohttp
+python-telegram-bot==20.7
+gspread
+oauth2client
+pandas
 openpyxl
-flask
-requests
